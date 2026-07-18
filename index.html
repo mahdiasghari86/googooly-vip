@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ریحان کوچولو;)">
+  <meta name="theme-color" content="#a855f7">  
+
+  <title>ریحان کوچولو;)</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #1a0a2e 0%, #2d1b4e 50%, #4a2080 100%);
+      font-family: Tahoma, Arial, sans-serif;
+      color: #e9d5ff;
+      user-select: none;
+      transition: background 0.6s ease;
+    }
+
+    .vip {
+      margin-bottom: 0.4rem;
+      font-size: 1rem;
+      color: #a78bfa;
+      transition: color 0.6s ease;
+    }
+
+    h1 {
+      margin-bottom: 0.75rem;
+      font-size: 1.8rem;
+      color: #c084fc;
+      transition: color 0.6s ease;
+    }
+
+    .score {
+      margin-bottom: 0.75rem;
+      font-size: 1.2rem;
+      color: #ddd6fe;
+    }
+
+    .score span {
+      color: #e879f9;
+      font-weight: bold;
+      transition: color 0.6s ease;
+    }
+
+    canvas {
+      border: 3px solid #a855f7;
+      border-radius: 8px;
+      background: #0d1b2a;
+      cursor: none;
+      box-shadow: 0 8px 32px rgba(168, 85, 247, 0.4);
+      transition: border-color 0.6s ease, box-shadow 0.6s ease;
+    }
+  </style>
+</head>
+<body>
+  <p class="vip" id="vip">VIP mode for my angle 🙃</p>
+  <h1 id="title">ریحان کوچولو;)</h1>
+  <p class="score">امتیاز: <span id="score">0</span> | توپ‌ها: <span id="ballCount">1</span>/<span id="ballMax">3</span></p>
+  <canvas id="game" width="400" height="500"></canvas>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const ballCountEl = document.getElementById('ballCount');
+    const titleEl = document.getElementById('title');
+    const vipEl = document.getElementById('vip');
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const MAX_BALLS = 3;
+    const FREE_MISSES = 3;
+    const POINTS_PER_BALL = 7;
+    const MIN_ARRIVAL_GAP_MS = 1500;
+    const BALL_LANES = Array.from({ length: MAX_BALLS }, (_, i) =>
+      W * ((i + 1) / (MAX_BALLS + 1))
+    );
+    const BASE_PADDLE_W = 80;
+
+    const themes = [
+      {
+        body: 'linear-gradient(135deg, #1a0a2e 0%, #2d1b4e 50%, #4a2080 100%)',
+        title: '#c084fc',
+        vip: '#a78bfa',
+        scoreAccent: '#e879f9',
+        canvasBorder: '#a855f7',
+        canvasBg: '#0d1b2a',
+        canvasShadow: 'rgba(168, 85, 247, 0.4)',
+        paddle: '#4cc9f0',
+        ball: '#e94560',
+        overlay: '#c084fc'
+      },
+      {
+        body: 'linear-gradient(135deg, #0a2e1a 0%, #1b4e2d 50%, #20804a 100%)',
+        title: '#4ade80',
+        vip: '#86efac',
+        scoreAccent: '#22d3ee',
+        canvasBorder: '#10b981',
+        canvasBg: '#0a1f14',
+        canvasShadow: 'rgba(16, 185, 129, 0.4)',
+        paddle: '#fbbf24',
+        ball: '#f97316',
+        overlay: '#4ade80'
+      },
+      {
+        body: 'linear-gradient(135deg, #2e0a0a 0%, #4e1b1b 50%, #802020 100%)',
+        title: '#fca5a5',
+        vip: '#fdba74',
+        scoreAccent: '#fde047',
+        canvasBorder: '#ef4444',
+        canvasBg: '#1f0a0a',
+        canvasShadow: 'rgba(239, 68, 68, 0.4)',
+        paddle: '#38bdf8',
+        ball: '#a855f7',
+        overlay: '#fca5a5'
+      }
+    ];
+
+    let score = 0;
+    let misses = 0;
+    let gameOver = false;
+    let running = true;
+    let activeTheme = themes[0];
+    let customTheme = null;
+    let colorBall = null;
+    let nextColorBallScore = 15;
+
+    const paddle = {
+      w: 80,
+      h: 14,
+      x: W / 2 - 40,
+      y: H - 30,
+      speed: 6
+    };
+
+    let ballSlots = [];
+
+    const keys = {};
+
+    const bgMusic = new Audio('1.mp3');
+    bgMusic.loop = true;
+    bgMusic.preload = 'auto';
+
+    const loseSound = new Audio('2.mp3');
+    loseSound.preload = 'auto';
+
+    const catchSound = new Audio('3.mp3');
+    catchSound.preload = 'auto';
+
+    let musicStarted = false;
+
+    function startBgMusic() {
+      if (gameOver) return;
+      bgMusic.play().then(() => {
+        musicStarted = true;
+      }).catch(() => {});
+    }
+
+    function stopBgMusic() {
+      bgMusic.pause();
+      bgMusic.currentTime = 0;
+    }
+
+    function playLoseSound() {
+      stopBgMusic();
+      loseSound.currentTime = 0;
+      loseSound.play().catch(() => {});
+    }
+
+    function playCatchSound() {
+      catchSound.currentTime = 0;
+      catchSound.play().catch(() => {});
+    }
+
+    function unlockAudio() {
+      if (!musicStarted && !gameOver) startBgMusic();
+    }
+
+    function applyTheme(theme) {
+      activeTheme = typeof theme === 'number' ? themes[theme] : theme;
+      document.body.style.background = activeTheme.body;
+      titleEl.style.color = activeTheme.title;
+      vipEl.style.color = activeTheme.vip;
+      scoreEl.style.color = activeTheme.scoreAccent;
+      canvas.style.borderColor = activeTheme.canvasBorder;
+      canvas.style.boxShadow = `0 8px 32px ${activeTheme.canvasShadow}`;
+    }
+
+    function createThemeFromHue(hue) {
+      const accentHue = (hue + 40) % 360;
+      const paddleHue = (hue + 180) % 360;
+      return {
+        body: `linear-gradient(135deg, hsl(${hue}, 45%, 10%) 0%, hsl(${hue}, 40%, 18%) 50%, hsl(${hue}, 50%, 28%) 100%)`,
+        title: `hsl(${hue}, 80%, 68%)`,
+        vip: `hsl(${hue}, 65%, 58%)`,
+        scoreAccent: `hsl(${accentHue}, 85%, 65%)`,
+        canvasBorder: `hsl(${hue}, 70%, 50%)`,
+        canvasBg: `hsl(${hue}, 35%, 8%)`,
+        canvasShadow: `hsla(${hue}, 70%, 50%, 0.4)`,
+        paddle: `hsl(${paddleHue}, 70%, 58%)`,
+        ball: `hsl(${hue}, 75%, 55%)`,
+        overlay: `hsl(${hue}, 80%, 68%)`
+      };
+    }
+
+    function maybeSpawnColorBall() {
+      if (colorBall || score < nextColorBallScore) return;
+
+      const hue = Math.floor(Math.random() * 360);
+      colorBall = {
+        x: 30 + Math.random() * (W - 60),
+        y: -16,
+        r: 15,
+        speed: 2.8,
+        hue,
+        color: `hsl(${hue}, 85%, 60%)`
+      };
+      nextColorBallScore += 15;
+    }
+
+    function handleColorBallCatch() {
+      playCatchSound();
+      customTheme = createThemeFromHue(colorBall.hue);
+      applyTheme(customTheme);
+      colorBall = null;
+    }
+
+    function updateColorBall() {
+      if (!colorBall) return;
+
+      colorBall.y += colorBall.speed;
+
+      const caught =
+        colorBall.y + colorBall.r >= paddle.y &&
+        colorBall.y - colorBall.r <= paddle.y + paddle.h &&
+        colorBall.x >= paddle.x &&
+        colorBall.x <= paddle.x + paddle.w;
+
+      if (caught) {
+        handleColorBallCatch();
+        return;
+      }
+
+      if (colorBall.y - colorBall.r > H) {
+        colorBall = null;
+      }
+    }
+
+    function getTargetBallCount() {
+      return Math.min(MAX_BALLS, 1 + Math.floor(score / POINTS_PER_BALL));
+    }
+
+    function getBallSpeed(slotIndex) {
+      const baseSpeed = 3 + score * 0.12;
+
+      if (getTargetBallCount() >= 3) {
+        return baseSpeed + slotIndex * 0.15;
+      }
+
+      return baseSpeed + slotIndex * 0.25;
+    }
+
+    function getSpawnStaggerDelay(staggerIndex) {
+      return staggerIndex * MIN_ARRIVAL_GAP_MS;
+    }
+
+    function countActiveBalls() {
+      return ballSlots.filter(ball => ball && !ball.pending).length;
+    }
+
+    function createBall(slotIndex) {
+      const totalBalls = getTargetBallCount();
+      const useLanes = totalBalls >= 2;
+      const x = useLanes
+        ? BALL_LANES[slotIndex % BALL_LANES.length]
+        : 20 + Math.random() * (W - 40);
+
+      return {
+        x,
+        y: -12,
+        r: 12,
+        speed: getBallSpeed(slotIndex),
+        slotIndex
+      };
+    }
+
+    function scheduleSpawn(slotIndex, delayMs, maxActiveBalls = Infinity) {
+      ballSlots[slotIndex] = {
+        pending: true,
+        spawnAt: performance.now() + delayMs,
+        slotIndex,
+        maxActiveBalls
+      };
+    }
+
+    function activatePendingBalls() {
+      const now = performance.now();
+      for (let i = 0; i < ballSlots.length; i++) {
+        const slot = ballSlots[i];
+        if (
+          slot &&
+          slot.pending &&
+          now >= slot.spawnAt &&
+          countActiveBalls() <= slot.maxActiveBalls
+        ) {
+          ballSlots[i] = createBall(slot.slotIndex);
+        }
+      }
+    }
+
+    function updateBallCountUI() {
+      const target = getTargetBallCount();
+      if (customTheme === null) {
+        applyTheme(Math.min(target - 1, themes.length - 1));
+      }
+      paddle.w = BASE_PADDLE_W + (target - 1) * 18;
+      ballCountEl.textContent = target;
+    }
+
+    function handleCatch(caughtSlotIndex) {
+      const activeBallsBeforeCatch = countActiveBalls();
+
+      playCatchSound();
+      score++;
+      scoreEl.textContent = score;
+      maybeSpawnColorBall();
+
+      const oldTarget = ballSlots.length;
+      const newTarget = getTargetBallCount();
+
+      while (ballSlots.length < newTarget) ballSlots.push(null);
+      ballSlots.length = newTarget;
+
+      const activeBallsAfterCatch = activeBallsBeforeCatch - 1;
+      const caughtBallRespawnDelay =
+        activeBallsAfterCatch > 0 ? MIN_ARRIVAL_GAP_MS : 0;
+      scheduleSpawn(
+        caughtSlotIndex,
+        caughtBallRespawnDelay,
+        Math.max(0, newTarget - 1)
+      );
+
+      let staggerIndex = 1;
+      for (let s = oldTarget; s < newTarget; s++) {
+        if (s !== caughtSlotIndex) {
+          scheduleSpawn(
+            s,
+            getSpawnStaggerDelay(staggerIndex),
+            Math.max(0, newTarget - 1)
+          );
+          staggerIndex++;
+        }
+      }
+
+      updateBallCountUI();
+    }
+
+    function resetGame() {
+      score = 0;
+      misses = 0;
+      gameOver = false;
+      running = true;
+      customTheme = null;
+      colorBall = null;
+      nextColorBallScore = 15;
+      scoreEl.textContent = '0';
+      paddle.x = W / 2 - BASE_PADDLE_W / 2;
+      paddle.w = BASE_PADDLE_W;
+      ballSlots = [createBall(0)];
+      applyTheme(0);
+      ballCountEl.textContent = '1';
+      startBgMusic();
+    }
+
+    function drawPaddle() {
+      ctx.fillStyle = activeTheme.paddle;
+      ctx.beginPath();
+      ctx.roundRect(paddle.x, paddle.y, paddle.w, paddle.h, 6);
+      ctx.fill();
+    }
+
+    function drawBall(ball) {
+      ctx.fillStyle = activeTheme.ball;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.beginPath();
+      ctx.arc(ball.x - 3, ball.y - 3, ball.r / 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawColorBall() {
+      if (!colorBall) return;
+
+      ctx.save();
+      ctx.shadowColor = colorBall.color;
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = colorBall.color;
+      ctx.beginPath();
+      ctx.arc(colorBall.x, colorBall.y, colorBall.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.beginPath();
+      ctx.arc(colorBall.x - 4, colorBall.y - 4, colorBall.r / 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawGameOver() {
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = activeTheme.overlay;
+      ctx.font = 'bold 16px Tahoma';
+      ctx.textAlign = 'center';
+      ctx.fillText('عیب نداره فسقلی', W / 2, H / 2 - 36);
+      ctx.fillText('اگه بخوای میتونم برات ساده ترش کنم🥲', W / 2, H / 2 - 12);
+      ctx.fillStyle = '#fff';
+      ctx.font = '18px Tahoma';
+      ctx.fillText('امتیاز: ' + score, W / 2, H / 2 + 24);
+    }
+
+    function update() {
+      if (!running || gameOver) return;
+
+      activatePendingBalls();
+      updateColorBall();
+
+      if (keys['ArrowLeft'] || keys['a'] || keys['A']) {
+        paddle.x = Math.max(0, paddle.x - paddle.speed);
+      }
+      if (keys['ArrowRight'] || keys['d'] || keys['D']) {
+        paddle.x = Math.min(W - paddle.w, paddle.x + paddle.speed);
+      }
+
+      for (let i = 0; i < ballSlots.length; i++) {
+        const ball = ballSlots[i];
+        if (!ball || ball.pending) continue;
+
+        ball.y += ball.speed;
+
+        const caught =
+          ball.y + ball.r >= paddle.y &&
+          ball.y - ball.r <= paddle.y + paddle.h &&
+          ball.x >= paddle.x &&
+          ball.x <= paddle.x + paddle.w;
+
+        if (caught) {
+          handleCatch(i);
+          break;
+        }
+
+        if (ball.y - ball.r > H) {
+          misses++;
+          if (misses > FREE_MISSES) {
+            gameOver = true;
+            running = false;
+            playLoseSound();
+          } else {
+            scheduleSpawn(i, 0);
+          }
+          break;
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = activeTheme.canvasBg;
+      ctx.fillRect(0, 0, W, H);
+      drawPaddle();
+      for (const slot of ballSlots) {
+        if (slot && !slot.pending) drawBall(slot);
+      }
+      drawColorBall();
+      if (gameOver) drawGameOver();
+    }
+
+    function tryRestart() {
+      if (gameOver) resetGame();
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    document.addEventListener('keydown', e => {
+      unlockAudio();
+      if (gameOver && (e.key === ' ' || e.key === 'Enter')) {
+        e.preventDefault();
+        tryRestart();
+        return;
+      }
+      keys[e.key] = true;
+      if (['ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+    });
+
+    document.addEventListener('keyup', e => {
+      keys[e.key] = false;
+    });
+
+    canvas.addEventListener('mousemove', e => {
+      unlockAudio();
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      paddle.x = Math.max(0, Math.min(W - paddle.w, mouseX - paddle.w / 2));
+    });
+
+    canvas.addEventListener('click', () => {
+      unlockAudio();
+      tryRestart();
+    });
+
+    ballSlots = [createBall(0)];
+    applyTheme(0);
+    startBgMusic();
+    loop();
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js'));
+    }
+  </script>
+</body>
+</html>
